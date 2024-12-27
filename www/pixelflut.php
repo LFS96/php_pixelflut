@@ -1,5 +1,5 @@
 <?php
-//autoload classes
+
 spl_autoload_register(function ($class) {
     include 'classes/' . $class . '.php';
 });
@@ -10,18 +10,19 @@ $file = "/var/www/html/img/php.webp";
 $threads = 4;
 $run_thread = $argv[1] ?? 0;
 
-$offsetX = 0;// 1550;
-$offsetY = 250;// 800;
+$offsetX = 0;
+$offsetY = 250;
 $mtu = 500;
 
-$ip = "pixelflut"; //192.168.16.2
-//$ip = "192.168.16.2";
+$ip = "pixelflut";
 
 $image = $ImageService->loadImage($file);
+if (!$image) {
+    throw new Exception("Failed to load image from $file");
+}
+
+$slice = [];
 $ImageService->splitImage($image, $threads, $offsetX, $offsetY, $slice);
-
-
-$pixelThreads = [];
 
 $tcpClass = new TCPClass();
 if (!$tcpClass->createSocket($ip, 1234)) {
@@ -31,36 +32,33 @@ if (!$tcpClass->createSocket($ip, 1234)) {
 echo "Thread $run_thread started\n";
 echo "Sending " . count($slice[$run_thread]) . " commands\n";
 
-$c = count($slice[$run_thread]);
+$commands = $slice[$run_thread];
+$totalCommands = count($commands);
 $completePrints = 0;
 
 while (true) {
-    $size = 0;
-    $packet = "";
-    for ($i = 0; $i < $c; $i++) {
-        // $command_arr = $slice[$run_thread][$i];
-        $command = $slice[$run_thread][$i][0];
-        $str_size = $slice[$run_thread][$i][1];
-        $size_n = $size + $str_size;
-        //$tcpClass->sendCommand($command, $str_size);
-        if ($size_n > $mtu) {
-           // echo $packet;
-            $tcpClass->sendCommand($packet, strlen($packet));
-            $packet = "";
-            $size = $str_size;
-        } else {
-            $size = $size_n;
+    $packet = '';
+    $packetSize = 0;
+
+    foreach ($commands as [$command, $commandSize]) {
+        $nextPacketSize = $packetSize + $commandSize;
+        if ($nextPacketSize > $mtu) {
+            if (!$tcpClass->sendCommand($packet, $packetSize)) {
+                echo "Error sending packet\n";
+                exit(1);
+            }
+            $packet = '';
+            $packetSize = 0;
         }
         $packet .= $command;
+        $packetSize += $commandSize;
     }
-    if (!$tcpClass->sendCommand($packet, $size)) {
-        echo "Error sending packet";
-        exit;
+
+    if ($packet !== '' && !$tcpClass->sendCommand($packet, $packetSize)) {
+        echo "Error sending final packet\n";
+        exit(1);
     }
+
     $completePrints++;
-   // echo "Thread $run_thread: $completePrints\n";
+    echo "Thread $run_thread completed iteration $completePrints\n";
 }
-
-
-
-
